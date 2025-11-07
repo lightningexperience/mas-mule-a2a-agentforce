@@ -1,1 +1,1 @@
-web: python agentforce-a2a-server.py
+web: uvicorn agentforce_a2a_server:app --host=0.0.0.0 --port=${PORT:-8000}

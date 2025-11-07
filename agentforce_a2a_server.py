@@ -71,14 +71,18 @@ def handle_task(task: TaskRequest):
     )
     final_msg = ""
     for line in response.iter_lines():
-        if line and line.decode("utf-8").startswith("data: "):
-            try:
-                event = json.loads(line.decode("utf-8")[6:])
-                if event.get("message", {}).get("type") in ["TextChunk", "Inform"]:
-                    final_msg = event["message"]["message"]
-                    break
-            except:
-                continue
+    if line and line.decode("utf-8").startswith("data: "):
+        try:
+            print("RAW:", line.decode("utf-8"))  # Log the raw line
+            event = json.loads(line.decode("utf-8")[6:])
+            print("EVENT:", event)  # Log parsed event
+            if event.get("message", {}).get("type") in ["TextChunk", "Inform"]:
+                final_msg = event["message"]["message"]
+                break
+        except Exception as e:
+            print("Error parsing line:", e)
+            continue
+
 
     return {
         "id": task.id,

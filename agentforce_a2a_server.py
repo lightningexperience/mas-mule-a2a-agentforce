@@ -24,12 +24,31 @@ class TaskRequest(BaseModel):
 
 @app.get("/.well-known/agent-card.json")
 def agent_card():
+    base_url = os.getenv("BASE_URL", "http://localhost:9001")
     return {
         "name": "Agentforce A2A",
         "description": "Escalates to Salesforce AI support agent.",
-        "url": os.getenv("BASE_URL", "http://localhost:9001"),
+        "url": base_url,
         "version": "1.0",
+        "protocolVersion": "0.3.0",
+        "preferredTransport": "HTTP+JSON",
+        "additionalInterfaces": [
+            {
+                "url": base_url,
+                "transport": "HTTP+JSON"
+            }
+        ],
         "capabilities": {"streaming": False},
+        "defaultInputModes": ["text"],
+        "defaultOutputModes": ["text"],
+        "skills": [
+            {
+                "id": "case-escalation",
+                "name": "Case Escalation",
+                "description": "Connects to Salesforce Agentforce and fetches support case updates.",
+                "tags": ["salesforce", "agentforce", "support"]
+            }
+        ]
     }
 
 @app.post("/tasks/send")

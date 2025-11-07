@@ -71,33 +71,21 @@ def handle_task(task: TaskRequest):
         stream=True
     )
 
-    chunks = []
-    debug = []
     final_msg = ""
-
+    debug_lines = []
     for line in response.iter_lines():
         if line and line.decode("utf-8").startswith("data: "):
             try:
-                raw = line.decode("utf-8")
-                debug.append("RAW: " + raw)
-                event = json.loads(raw[6:])
-                debug.append("EVENT: " + json.dumps(event))
-
-                msg = event.get("message", {})
-                if msg.get("type") in ["TextChunk", "Inform"] and "message" in msg:
-                    chunks.append(msg["message"])
+                decoded = line.decode("utf-8")
+                debug_lines.append(f"RAW: {decoded}")
+                event = json.loads(decoded[6:])
+                debug_lines.append(f"EVENT: {json.dumps(event)}")
+                if event.get("message", {}).get("type") == "Inform":
+                    final_msg = event["message"]["message"]
+                    break
             except Exception as e:
-                debug.append("Error parsing line: " + str(e))
+                debug_lines.append(f"Error parsing line: {str(e)}")
                 continue
-
-    seen = set()
-    deduped = []
-    for chunk in chunks:
-        if chunk not in seen:
-            seen.add(chunk)
-            deduped.append(chunk)
-
-    final_msg = "\n".join(deduped)
 
     return {
         "id": task.id,
@@ -106,5 +94,5 @@ def handle_task(task: TaskRequest):
             task.message.dict(),
             {"role": "agent", "parts": [{"text": final_msg}]},
         ],
-        "debug": debug
+        "debug": debug_lines
     }

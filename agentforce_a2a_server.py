@@ -81,9 +81,9 @@ def handle_task(task: TaskRequest):
                 debug_logs.append(f"RAW: {raw}")
                 event = json.loads(raw[6:])
                 debug_logs.append(f"EVENT: {json.dumps(event)}")
-                if event.get("message", {}).get("type") in ["TextChunk", "Inform"]:
-                    final_msg = event["message"]["message"]
-                    break
+                msg_type = event.get("message", {}).get("type")
+                if msg_type in ["TextChunk", "Inform"]:
+                    final_msg += event["message"]["message"]
             except Exception as e:
                 debug_logs.append(f"Error parsing line: {str(e)}")
                 continue

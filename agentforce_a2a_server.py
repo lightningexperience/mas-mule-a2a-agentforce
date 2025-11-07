@@ -22,7 +22,7 @@ class TaskRequest(BaseModel):
     id: str
     message: Message
 
-@app.get("/.well-known/agent.json")
+@app.get("/.well-known/agent-card.json")
 def agent_card():
     return {
         "name": "Agentforce A2A",

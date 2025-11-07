@@ -6,6 +6,7 @@ from pydantic import BaseModel
 import os
 import requests
 import uuid
+import json
 
 app = FastAPI()
 
@@ -69,20 +70,23 @@ def handle_task(task: TaskRequest):
         headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
         stream=True
     )
-    final_msg = ""
-    for line in response.iter_lines():
-    if line and line.decode("utf-8").startswith("data: "):
-        try:
-            print("RAW:", line.decode("utf-8"))  # Log the raw line
-            event = json.loads(line.decode("utf-8")[6:])
-            print("EVENT:", event)  # Log parsed event
-            if event.get("message", {}).get("type") in ["TextChunk", "Inform"]:
-                final_msg = event["message"]["message"]
-                break
-        except Exception as e:
-            print("Error parsing line:", e)
-            continue
 
+    final_msg = ""
+    debug_logs = []
+
+    for line in response.iter_lines():
+        if line and line.decode("utf-8").startswith("data: "):
+            try:
+                raw = line.decode("utf-8")
+                debug_logs.append(f"RAW: {raw}")
+                event = json.loads(raw[6:])
+                debug_logs.append(f"EVENT: {json.dumps(event)}")
+                if event.get("message", {}).get("type") in ["TextChunk", "Inform"]:
+                    final_msg = event["message"]["message"]
+                    break
+            except Exception as e:
+                debug_logs.append(f"Error parsing line: {str(e)}")
+                continue
 
     return {
         "id": task.id,
@@ -90,7 +94,6 @@ def handle_task(task: TaskRequest):
         "messages": [
             task.message.dict(),
             {"role": "agent", "parts": [{"text": final_msg}]},
-        ]
+        ],
+        "debug": debug_logs
     }
-
-

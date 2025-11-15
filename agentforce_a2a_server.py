@@ -102,8 +102,6 @@ def get_agent_card(request: Request):
                 "description": "Connects to Salesforce Agentforce and fetches support case updates.",
                 "inputModes": ["text/plain"],
                 "outputModes": ["text/plain"],
-                "defaultInputMode": "text/plain",
-                "defaultOutputMode": "text/plain",
                 "examples": [
                     "Check the status of my support case",
                     "Escalate this issue to Agentforce",

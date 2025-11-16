@@ -486,6 +486,14 @@ def root(request: Request):
         "instructions": "Use the agent_card URL in A2A Inspector to connect"
     }
 
+@app.post("/")
+async def root_post_handler(task_request: A2ATaskRequest):
+    """
+    Root POST endpoint for A2A task requests from Mule Fabric.
+    Handles direct task submissions to base URL.
+    """
+    logger.info(f"Root POST task request: {task_request.taskId}")
+    return await handle_a2a_task(task_request)
 
 # HEROKU SPECIFIC: Application must bind to the PORT environment variable
 if __name__ == "__main__":

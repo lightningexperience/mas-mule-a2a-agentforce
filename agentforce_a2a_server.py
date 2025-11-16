@@ -491,18 +491,35 @@ async def root_post_handler(request: Request):
     body = await request.json()
     logger.info(f"Root POST raw payload: {body}")
 
-    # 1. Pure A2ATaskRequest
+    # Case 1: Already a proper A2A TaskRequest → process normally
     try:
         task_request = A2ATaskRequest(**body)
-        return await handle_a2a_task(task_request)
+        result = await handle_a2a_task(task_request)
+        return {
+            "jsonrpc": "2.0",
+            "id": body.get("id"),
+            "result": {
+                "message": {
+                    "kind": "message",
+                    "role": "agent",
+                    "parts": [
+                        {
+                            "kind": "text",
+                            "text": result["outputs"][0]["parts"][0]["text"]
+                        }
+                    ]
+                }
+            }
+        }
     except Exception:
-        pass
+        pass  # Not task-mode → continue
 
-    # 2. Mule Fabric JSONRPC envelope → convert
-    if body.get("jsonrpc") == "2.0" and body.get("method") == "message/send":
+    # Case 2: Fabric "message/send" envelope
+    if body.get("method") == "message/send" and "params" in body:
         msg = body["params"]["message"]
         text = msg["parts"][0]["text"]
 
+        # Convert into A2ATaskRequest
         task_request = A2ATaskRequest(
             taskId=str(uuid.uuid4()),
             skillId="case-escalation",
@@ -515,30 +532,31 @@ async def root_post_handler(request: Request):
             contextId=msg.get("contextId")
         )
 
-        logger.info(f"Converted Fabric JSONRPC → A2ATaskRequest: {task_request}")
-        return await handle_a2a_task(task_request)
+        logger.info(f"Converted Fabric message → A2ATaskRequest: {task_request}")
 
-    # 3. Legacy Fabric format (non-JSONRPC)
-    if "message" in body:
-        msg = body["message"]
-        text = msg["parts"][0]["text"]
+        # Process task (calls Salesforce Agentforce)
+        result = await handle_a2a_task(task_request)
+        agent_response = result["outputs"][0]["parts"][0]["text"]
 
-        task_request = A2ATaskRequest(
-            taskId=str(uuid.uuid4()),
-            skillId="case-escalation",
-            inputs=[
-                A2AInput(
-                    role=msg.get("role", "user"),
-                    content=[ContentPart(type="text/plain", value=text)]
-                )
-            ],
-            contextId=msg.get("contextId")
-        )
+        # ✔ Return A2A Message Event (REQUIRED by Mule Fabric)
+        return {
+            "jsonrpc": "2.0",
+            "id": body["id"],
+            "result": {
+                "message": {
+                    "kind": "message",
+                    "role": "agent",
+                    "parts": [
+                        {
+                            "kind": "text",
+                            "text": agent_response
+                        }
+                    ]
+                }
+            }
+        }
 
-        logger.info(f"Converted Fabric legacy → A2ATaskRequest: {task_request}")
-        return await handle_a2a_task(task_request)
-
-    # 4. Everything else → error
+    # Fallback
     return JSONResponse(
         status_code=400,
         content={"error": "Unrecognized payload format", "body": body}

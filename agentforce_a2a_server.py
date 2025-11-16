@@ -487,13 +487,44 @@ def root(request: Request):
     }
 
 @app.post("/")
-async def root_post_handler(task_request: A2ATaskRequest):
-    """
-    Root POST endpoint for A2A task requests from Mule Fabric.
-    Handles direct task submissions to base URL.
-    """
-    logger.info(f"Root POST task request: {task_request.taskId}")
-    return await handle_a2a_task(task_request)
+async def root_post_handler(request: Request):
+    body = await request.json()
+    logger.info(f"Root POST raw payload: {body}")
+
+    # If this is already an A2ATaskRequest, process normally
+    try:
+        task_request = A2ATaskRequest(**body)
+        return await handle_a2a_task(task_request)
+    except Exception:
+        pass  # Not A2ATaskRequest, try Fabric format
+
+    # Fabric sends message envelope → convert to A2ATaskRequest
+    if "message" in body:
+        msg = body["message"]
+        text = msg["parts"][0]["text"]
+
+        task_request = A2ATaskRequest(
+            taskId=str(uuid.uuid4()),
+            skillId="case-escalation",
+            inputs=[
+                A2AInput(
+                    role=msg.get("role", "user"),
+                    content=[
+                        ContentPart(type="text/plain", value=text)
+                    ]
+                )
+            ],
+            contextId=msg.get("contextId", None)
+        )
+
+        logger.info(f"Converted Fabric message → A2ATaskRequest: {task_request}")
+        return await handle_a2a_task(task_request)
+
+    return JSONResponse(
+        status_code=400,
+        content={"error": "Unrecognized payload format", "body": body}
+    )
+
 
 # HEROKU SPECIFIC: Application must bind to the PORT environment variable
 if __name__ == "__main__":

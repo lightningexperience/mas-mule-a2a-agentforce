@@ -364,46 +364,42 @@ def root(request: Request):
 # ------------------------------------------------------
 #   FIXED root_post_handler (ONLY THESE BLOCKS MODIFIED)
 # ------------------------------------------------------
-
+# ------------------------------------------------------
+# ------------------------------------------------------
+# ------------------------------------------------------
 @app.post("/")
 async def root_post_handler(request: Request):
-
     body = await request.json()
     logger.info(f"Root POST raw payload: {body}")
 
-    # Case 1: Already an A2ATaskRequest
+    # Case 1: Already a proper A2A TaskRequest → process normally
     try:
         task_request = A2ATaskRequest(**body)
         result = await handle_a2a_task(task_request)
-        agent_text = result["outputs"][0]["parts"][0]["text"]
-
         return {
             "jsonrpc": "2.0",
             "id": body.get("id"),
             "result": {
-                "kind": "event",
-                "event": {
-                    "kind": "message",
-                    "role": "agent",
-                    "messageId": str(uuid.uuid4()),
-                    "parts": [
-                        {
-                            "kind": "text",
-                            "text": agent_text
-                        }
-                    ]
-                }
+                "kind": "message",  # Add kind at result level
+                "role": "agent",
+                "messageId": str(uuid.uuid4()),
+                "parts": [
+                    {
+                        "kind": "text",
+                        "text": result["outputs"][0]["parts"][0]["text"]
+                    }
+                ]
             }
         }
     except Exception:
-        pass
+        pass  # Not task-mode → continue
 
-    # Case 2: Fabric message/send
+    # Case 2: Fabric "message/send" envelope
     if body.get("method") == "message/send" and "params" in body:
-
         msg = body["params"]["message"]
         text = msg["parts"][0]["text"]
 
+        # Convert into A2ATaskRequest
         task_request = A2ATaskRequest(
             taskId=str(uuid.uuid4()),
             skillId="case-escalation",
@@ -416,32 +412,37 @@ async def root_post_handler(request: Request):
             contextId=msg.get("contextId")
         )
 
-        result = await handle_a2a_task(task_request)
-        agent_text = result["outputs"][0]["parts"][0]["text"]
+        logger.info(f"Converted Fabric message → A2ATaskRequest: {task_request}")
 
+        # Process task (calls Salesforce Agentforce)
+        result = await handle_a2a_task(task_request)
+        agent_response = result["outputs"][0]["parts"][0]["text"]
+
+        # ✔ Return A2A Message Event (REQUIRED by Mule Fabric)
         return {
             "jsonrpc": "2.0",
             "id": body["id"],
             "result": {
-                "kind": "event",
-                "event": {
-                    "kind": "message",
-                    "role": "agent",
-                    "messageId": str(uuid.uuid4()),
-                    "parts": [
-                        {
-                            "kind": "text",
-                            "text": agent_text
-                        }
-                    ]
-                }
+                "kind": "message",  # kind at result level, not nested
+                "role": "agent",
+                "messageId": str(uuid.uuid4()),
+                "parts": [
+                    {
+                        "kind": "text",
+                        "text": agent_response
+                    }
+                ]
             }
         }
 
+    # Fallback
     return JSONResponse(
         status_code=400,
         content={"error": "Unrecognized payload format", "body": body}
     )
+# ------------------------------------------------------
+# ------------------------------------------------------
+# ------------------------------------------------------
 
 
 # HEROKU SPECIFIC ENTRYPOINT

@@ -491,14 +491,34 @@ async def root_post_handler(request: Request):
     body = await request.json()
     logger.info(f"Root POST raw payload: {body}")
 
-    # If this is already an A2ATaskRequest, process normally
+    # 1. Pure A2ATaskRequest
     try:
         task_request = A2ATaskRequest(**body)
         return await handle_a2a_task(task_request)
     except Exception:
-        pass  # Not A2ATaskRequest, try Fabric format
+        pass
 
-    # Fabric sends message envelope → convert to A2ATaskRequest
+    # 2. Mule Fabric JSONRPC envelope → convert
+    if body.get("jsonrpc") == "2.0" and body.get("method") == "message/send":
+        msg = body["params"]["message"]
+        text = msg["parts"][0]["text"]
+
+        task_request = A2ATaskRequest(
+            taskId=str(uuid.uuid4()),
+            skillId="case-escalation",
+            inputs=[
+                A2AInput(
+                    role=msg.get("role", "user"),
+                    content=[ContentPart(type="text/plain", value=text)]
+                )
+            ],
+            contextId=msg.get("contextId")
+        )
+
+        logger.info(f"Converted Fabric JSONRPC → A2ATaskRequest: {task_request}")
+        return await handle_a2a_task(task_request)
+
+    # 3. Legacy Fabric format (non-JSONRPC)
     if "message" in body:
         msg = body["message"]
         text = msg["parts"][0]["text"]
@@ -509,21 +529,21 @@ async def root_post_handler(request: Request):
             inputs=[
                 A2AInput(
                     role=msg.get("role", "user"),
-                    content=[
-                        ContentPart(type="text/plain", value=text)
-                    ]
+                    content=[ContentPart(type="text/plain", value=text)]
                 )
             ],
-            contextId=msg.get("contextId", None)
+            contextId=msg.get("contextId")
         )
 
-        logger.info(f"Converted Fabric message → A2ATaskRequest: {task_request}")
+        logger.info(f"Converted Fabric legacy → A2ATaskRequest: {task_request}")
         return await handle_a2a_task(task_request)
 
+    # 4. Everything else → error
     return JSONResponse(
         status_code=400,
         content={"error": "Unrecognized payload format", "body": body}
     )
+
 
 
 # HEROKU SPECIFIC: Application must bind to the PORT environment variable

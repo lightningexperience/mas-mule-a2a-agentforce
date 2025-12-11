@@ -137,7 +137,7 @@ async def json_rpc_handler(payload: Dict[str, Any]):
             "jsonrpc": "2.0",
             "id": rpc_id,
             "error": {
-                "code": -32601",
+                "code": -32601,
                 "message": f"Method not found: {method}"
             }
         }

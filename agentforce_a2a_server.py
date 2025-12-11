@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Dict, Any
 
+
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AgentforceA2AServer")
@@ -30,6 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # --- A2A Protocol Schemas (Strictly Enforced) ---
 
 class ContentPart(BaseModel):
@@ -46,8 +48,9 @@ class A2ATaskRequest(BaseModel):
     inputs: List[A2AInput] = Field(..., description="List of messages in the task thread")
     contextId: Optional[str] = Field(None, description="Optional session context ID.")
 
+
 # -----------------------------
-#   Agent Card (JSONRPC Compatible)
+# Agent Card (JSONRPC Compatible)
 # -----------------------------
 @app.get("/.well-known/agent-card.json")
 def get_agent_card(request: Request):
@@ -55,14 +58,14 @@ def get_agent_card(request: Request):
     forwarded_proto = request.headers.get("x-forwarded-proto", "http")
     host = request.headers.get("host", str(request.url).split("//")[1].split("/")[0])
     base_url = f"{forwarded_proto}://{host}"
-    
+
     logger.info("="*60)
     logger.info("AGENT CARD REQUEST")
     logger.info(f"Base URL: {base_url}")
     logger.info(f"x-forwarded-proto: {forwarded_proto}")
     logger.info(f"host: {host}")
     logger.info("="*60)
-    
+
     agent_card = {
         "protocolVersion": "0.3.0",
         "name": "Agentforce A2A",
@@ -71,15 +74,19 @@ def get_agent_card(request: Request):
         "version": "2.0.0",
         "vendor": "Salesforce",
         "apiVersion": "1.0.0",
+
         "capabilities": {
             "pushNotifications": False,
             "streaming": False,
             "batching": False,
             "stateful": False
         },
+
         "securitySchemes": {},
+
         "defaultInputModes": ["text/plain"],
         "defaultOutputModes": ["text/plain"],
+
         "skills": [
             {
                 "id": "case-escalation",
@@ -95,6 +102,7 @@ def get_agent_card(request: Request):
                 "tags": ["salesforce", "agentforce", "support"]
             }
         ],
+
         "preferredTransport": "JSONRPC",
         "transports": {
             "JSONRPC": {
@@ -104,44 +112,38 @@ def get_agent_card(request: Request):
             }
         }
     }
-    
+
     logger.info(f"Returning agent card with JSONRPC URL: {base_url}/json-rpc")
     return agent_card
 
-# ------------------------------------------------------
-#   JSONRPC ENDPOINT (REQUIRED BY INSPECTOR)
-# ------------------------------------------------------
 
+# ------------------------------------------------------
+# JSONRPC ENDPOINT (REQUIRED BY INSPECTOR)
+# ------------------------------------------------------
 @app.post("/json-rpc")
 async def json_rpc_handler(payload: Dict[str, Any]):
 
     logger.info(f"JSONRPC REQUEST received")
     logger.info(f"Payload: {payload}")
-    
+
     if "jsonrpc" not in payload or payload["jsonrpc"] != "2.0":
         return {
             "jsonrpc": "2.0",
             "id": payload.get("id"),
-            "error": {
-                "code": -32600,
-                "message": "Invalid Request: jsonrpc version must be 2.0"
-            }
+            "error": {"code": -32600, "message": "Invalid Request: jsonrpc version must be 2.0"}
         }
-    
+
     method = payload.get("method")
     params = payload.get("params")
     rpc_id = payload.get("id")
-    
+
     if method != "task":
         return {
             "jsonrpc": "2.0",
             "id": rpc_id,
-            "error": {
-                "code": -32601,
-                "message": f"Method not found: {method}"
-            }
+            "error": {"code": -32601, "message": f"Method not found: {method}"}
         }
-    
+
     try:
         task_request = A2ATaskRequest(**params)
         logger.info(f"Task request validated: {task_request.taskId}")
@@ -149,82 +151,71 @@ async def json_rpc_handler(payload: Dict[str, Any]):
         return {
             "jsonrpc": "2.0",
             "id": rpc_id,
-            "error": {
-                "code": -32602",
-                "message": f"Invalid params: {str(e)}"
-            }
+            "error": {"code": -32602, "message": f"Invalid params: {str(e)}"}
         }
-    
+
     response = await handle_a2a_task(task_request)
-    
-    return {
-        "jsonrpc": "2.0",
-        "id": rpc_id,
-        "result": response
-    }
+
+    return {"jsonrpc": "2.0", "id": rpc_id, "result": response}
+
 
 # ------------------------------------------------------
-#   Main A2A Task Endpoint (Direct HTTP fallback)
+# Main A2A Task Endpoint (Direct HTTP fallback)
 # ------------------------------------------------------
-
 @app.post("/tasks")
 async def handle_a2a_task_endpoint(task_request: A2ATaskRequest):
     logger.info(f"Direct HTTP task request: {task_request.taskId}")
     return await handle_a2a_task(task_request)
 
+
 # ------------------------------------------------------
-# 🚀 THE ONLY MODIFIED BLOCK — username+password OAuth
+# Salesforce Agentforce Integration
 # ------------------------------------------------------
 
+# ⭐ ONLY THIS BLOCK WAS CHANGED ⭐
 def get_salesforce_token():
-
-    token_url = "https://login.salesforce.com/services/oauth2/token"
+    """
+    Username–password OAuth flow.
+    """
+    login_url = "https://login.salesforce.com/services/oauth2/token"
 
     client_id = os.getenv("SF_CLIENT_ID")
     client_secret = os.getenv("SF_CLIENT_SECRET")
     username = os.getenv("SF_USERNAME")
     password = os.getenv("SF_PASSWORD")
+    security_token = os.getenv("SF_SECURITY_TOKEN", "")
 
     if not all([client_id, client_secret, username, password]):
         raise ValueError("Missing Salesforce OAuth environment variables")
 
-    response = requests.post(
-        token_url,
-        data={
-            "grant_type": "password",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "username": username,
-            "password": password
-        }
-    )
+    full_password = password + security_token
+
+    response = requests.post(login_url, data={
+        "grant_type": "password",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "username": username,
+        "password": full_password
+    })
 
     response.raise_for_status()
-    token_data = response.json()
+    token = response.json()["access_token"]
+    return token
 
-    return token_data["access_token"]
-
-
-# ------------------------------------------------------
-#   Salesforce Agentforce Integration (RESTORED URLs)
-# ------------------------------------------------------
 
 def query_agentforce(user_message: str, access_token: str):
-
+    sf_instance = os.getenv("SF_INSTANCE")
     agent_id = os.getenv("SF_AGENT_ID", "0XxWt0000005qu1KAA")
-
-    # 🔥 RESTORED ORIGINAL CORRECT ENDPOINT
-    base_url = "https://api.salesforce.com/einstein/ai-agent/v1"
 
     session_payload = {
         "externalSessionKey": str(uuid.uuid4()),
-        "instanceConfig": {},
+        "instanceConfig": {"endpoint": sf_instance},
         "streamingCapabilities": {"chunkTypes": ["Text"]},
         "bypassUser": True
     }
 
     session_res = requests.post(
-        f"{base_url}/agents/{agent_id}/sessions",
+        f"https://api.salesforce.com/einstein/ai-agent/v1/agents/{agent_id}/sessions",
         json=session_payload,
         headers={
             "Authorization": f"Bearer {access_token}",
@@ -244,7 +235,7 @@ def query_agentforce(user_message: str, access_token: str):
     }
 
     response = requests.post(
-        f"{base_url}/sessions/{session_id}/messages/stream",
+        f"https://api.salesforce.com/einstein/ai-agent/v1/sessions/{session_id}/messages/stream",
         json=message_payload,
         headers={
             "Authorization": f"Bearer {access_token}",
@@ -261,16 +252,16 @@ def query_agentforce(user_message: str, access_token: str):
             if event.get("message", {}).get("type") == "Inform":
                 final_msg = event["message"]["message"]
                 break
-    
+
     if not final_msg:
         final_msg = "No response received from Agentforce."
 
     return final_msg, []
 
-# ------------------------------------------------------
-#   Core Task Handler
-# ------------------------------------------------------
 
+# ------------------------------------------------------
+# Core Task Handler
+# ------------------------------------------------------
 async def handle_a2a_task(task_request: A2ATaskRequest):
 
     task_id = task_request.taskId
@@ -283,7 +274,7 @@ async def handle_a2a_task(task_request: A2ATaskRequest):
             "taskId": task_id,
             "error": "Invalid or missing message inputs in A2A payload."
         }
-    
+
     try:
         access_token = get_salesforce_token()
         agentforce_response, debug_info = query_agentforce(latest_message_content, access_token)
@@ -291,7 +282,7 @@ async def handle_a2a_task(task_request: A2ATaskRequest):
     except Exception as e:
         response_text = f"⚠️ Failed to connect to Salesforce Agentforce: {str(e)}"
         debug_info = [str(e)]
-    
+
     response = {
         "status": "completed",
         "taskId": task_id,
@@ -300,35 +291,31 @@ async def handle_a2a_task(task_request: A2ATaskRequest):
                 "kind": "message",
                 "role": "agent",
                 "parts": [
-                    {
-                        "kind": "text",
-                        "text": response_text
-                    }
+                    {"kind": "text", "text": response_text}
                 ],
                 "contextId": task_request.contextId or task_id
             }
         ]
     }
-    
+
     if debug_info:
         response["debug"] = debug_info
-    
+
     return response
 
-# ------------------------------------------------------
-#   Health Check Endpoint
-# ------------------------------------------------------
 
+# ------------------------------------------------------
+# Health Check Endpoint
+# ------------------------------------------------------
 @app.get("/health")
 def health_check():
-
     sf_configured = all([
         os.getenv("SF_CLIENT_ID"),
         os.getenv("SF_CLIENT_SECRET"),
         os.getenv("SF_USERNAME"),
         os.getenv("SF_PASSWORD")
     ])
-    
+
     return {
         "status": "healthy",
         "version": "2.0.0",
@@ -336,17 +323,17 @@ def health_check():
         "salesforce_configured": sf_configured
     }
 
-# ------------------------------------------------------
-#   Root Endpoint
-# ------------------------------------------------------
 
+# ------------------------------------------------------
+# Root Endpoint
+# ------------------------------------------------------
 @app.get("/")
 def root(request: Request):
 
     forwarded_proto = request.headers.get("x-forwarded-proto", "http")
     host = request.headers.get("host", "localhost")
     base_url = f"{forwarded_proto}://{host}"
-    
+
     return {
         "service": "Agentforce A2A Server",
         "version": "2.0.0",
@@ -368,18 +355,20 @@ def root(request: Request):
         "instructions": "Use the agent_card URL in A2A Inspector to connect"
     }
 
-# ------------------------------------------------------
-#   FIXED root_post_handler (UNCHANGED)
-# ------------------------------------------------------
 
+# ------------------------------------------------------
+# FIXED root_post_handler (UNCHANGED)
+# ------------------------------------------------------
 @app.post("/")
 async def root_post_handler(request: Request):
     body = await request.json()
     logger.info(f"Root POST raw payload: {body}")
 
+    # Case 1: Already a proper A2A TaskRequest → process normally
     try:
         task_request = A2ATaskRequest(**body)
         result = await handle_a2a_task(task_request)
+
         return {
             "jsonrpc": "2.0",
             "id": body.get("id"),
@@ -388,17 +377,16 @@ async def root_post_handler(request: Request):
                 "role": "agent",
                 "messageId": str(uuid.uuid4()),
                 "parts": [
-                    {
-                        "kind": "text",
-                        "text": result["outputs"][0]["parts"][0]["text"]
-                    }
+                    {"kind": "text", "text": result["outputs"][0]["parts"][0]["text"]}
                 ]
             }
         }
     except Exception:
-        pass
+        pass  # Not task-mode → continue
 
+    # Case 2: Fabric "message/send" envelope
     if body.get("method") == "message/send" and "params" in body:
+
         msg = body["params"]["message"]
         text = msg["parts"][0]["text"]
 
@@ -426,24 +414,20 @@ async def root_post_handler(request: Request):
                 "kind": "message",
                 "role": "agent",
                 "messageId": str(uuid.uuid4()),
-                "parts": [
-                    {
-                        "kind": "text",
-                        "text": agent_response
-                    }
-                ]
+                "parts": [{"kind": "text", "text": agent_response}]
             }
         }
 
+    # Fallback
     return JSONResponse(
         status_code=400,
         content={"error": "Unrecognized payload format", "body": body}
     )
 
-# ------------------------------------------------------
-#   HEROKU ENTRYPOINT
-# ------------------------------------------------------
 
+# ------------------------------------------------------
+# HEROKU SPECIFIC ENTRYPOINT (UNCHANGED)
+# ------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))

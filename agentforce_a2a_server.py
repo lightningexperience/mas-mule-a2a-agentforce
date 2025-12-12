@@ -1,11 +1,13 @@
 # --- Agentforce A2A Server (Fixed & Heroku Ready) ---
-# Version 2.0.0
+# Version 2.0.1
 
 import os
 import logging
 import requests
 import uuid
 import json
+import time
+import jwt
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -71,7 +73,7 @@ def get_agent_card(request: Request):
         "name": "Agentforce A2A",
         "description": "Escalates to Salesforce AI support agent.",
         "url": f"{base_url}/",
-        "version": "2.0.0",
+        "version": "2.0.1",
         "vendor": "Salesforce",
         "apiVersion": "1.0.0",
 
@@ -169,34 +171,44 @@ async def handle_a2a_task_endpoint(task_request: A2ATaskRequest):
 
 
 # ------------------------------------------------------
-# Salesforce Agentforce Integration
+# Salesforce Agentforce Integration (JWT-based)
 # ------------------------------------------------------
 
-# ⭐ ONLY THIS BLOCK WAS CHANGED ⭐
 def get_salesforce_token():
     """
-    Username–password OAuth flow.
+    JWT Bearer OAuth flow for Salesforce / Agentforce.
+    Uses:
+      - SF_CLIENT_ID        → Connected App Consumer Key
+      - SF_USERNAME         → Salesforce username for the user context
+      - SF_JWT_PRIVATE_KEY  → PEM-encoded RSA private key (full text)
+      - SF_LOGIN_HOST       → Optional, defaults to https://login.salesforce.com
     """
-    login_url = "https://login.salesforce.com/services/oauth2/token"
+    login_host = os.getenv("SF_LOGIN_HOST", "https://login.salesforce.com")
+    token_url = f"{login_host}/services/oauth2/token"
 
     client_id = os.getenv("SF_CLIENT_ID")
-    client_secret = os.getenv("SF_CLIENT_SECRET")
     username = os.getenv("SF_USERNAME")
-    password = os.getenv("SF_PASSWORD")
-    security_token = os.getenv("SF_SECURITY_TOKEN", "")
+    private_key = os.getenv("SF_JWT_PRIVATE_KEY")
 
-    if not all([client_id, client_secret, username, password]):
-        raise ValueError("Missing Salesforce OAuth environment variables")
+    if not all([client_id, username, private_key]):
+        raise ValueError("Missing SF_CLIENT_ID, SF_USERNAME, or SF_JWT_PRIVATE_KEY for JWT OAuth")
 
-    full_password = password + security_token
+    payload = {
+        "iss": client_id,
+        "sub": username,
+        "aud": login_host,
+        "exp": int(time.time()) + 180
+    }
 
-    response = requests.post(login_url, data={
-        "grant_type": "password",
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "username": username,
-        "password": full_password
-    })
+    assertion = jwt.encode(payload, private_key, algorithm="RS256")
+
+    response = requests.post(
+        token_url,
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": assertion
+        }
+    )
 
     response.raise_for_status()
     token = response.json()["access_token"]
@@ -311,14 +323,13 @@ async def handle_a2a_task(task_request: A2ATaskRequest):
 def health_check():
     sf_configured = all([
         os.getenv("SF_CLIENT_ID"),
-        os.getenv("SF_CLIENT_SECRET"),
         os.getenv("SF_USERNAME"),
-        os.getenv("SF_PASSWORD")
+        os.getenv("SF_JWT_PRIVATE_KEY")
     ])
 
     return {
         "status": "healthy",
-        "version": "2.0.0",
+        "version": "2.0.1",
         "service": "Agentforce A2A Server",
         "salesforce_configured": sf_configured
     }
@@ -336,7 +347,7 @@ def root(request: Request):
 
     return {
         "service": "Agentforce A2A Server",
-        "version": "2.0.0",
+        "version": "2.0.1",
         "status": "running",
         "deployment": "Heroku-ready",
         "base_url": base_url,
@@ -348,9 +359,8 @@ def root(request: Request):
         },
         "salesforce_configured": all([
             os.getenv("SF_CLIENT_ID"),
-            os.getenv("SF_CLIENT_SECRET"),
             os.getenv("SF_USERNAME"),
-            os.getenv("SF_PASSWORD")
+            os.getenv("SF_JWT_PRIVATE_KEY")
         ]),
         "instructions": "Use the agent_card URL in A2A Inspector to connect"
     }
